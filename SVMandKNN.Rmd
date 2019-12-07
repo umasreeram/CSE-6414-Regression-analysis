@@ -1,0 +1,144 @@
+---
+title: "SVM and KNN"
+author: "Brett Watanabe"
+date: "12/4/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+credit_data = read.csv("credit.csv",sep=",",header=T)
+credit_data$default[credit_data$default==2] =0
+set.seed(190)
+
+
+```
+```{r}
+credit_data$checking_balance <- as.factor(credit_data$checking_balance)
+credit_data$credit_history <- as.factor(credit_data$credit_history)
+credit_data$purpose <- as.factor(credit_data$purpose)
+credit_data$savings_balance <- as.factor(credit_data$savings_balance)
+credit_data$employment_length <- as.factor(credit_data$employment_length)
+credit_data$installment_rate <-as.factor(credit_data$installment_rate)
+credit_data$dependents <- as.factor(credit_data$dependents)
+credit_data$employment_length<-as.factor(credit_data$employment_length)
+credit_data$personal_status <-as.factor(credit_data$personal_status)
+credit_data$other_debtors <- as.factor(credit_data$other_debtors)
+credit_data$property <- as.factor(credit_data$property)
+credit_data$installment_plan<-as.factor(credit_data$installment_plan)
+credit_data$housing <-as.factor(credit_data$housing)
+credit_data$telephone <- as.factor(credit_data$telephone)
+credit_data$foreign_worker <- as.factor(credit_data$foreign_worker)
+credit_data$job <- as.factor(credit_data$job)
+```
+```{r}
+testRows=sample(nrow(credit_data),0.2*nrow(credit_data))
+testData=credit_data[testRows, ]
+trainData=credit_data[-testRows, ]
+```
+
+SVM
+```{r}
+library(kernlab)
+```
+
+kernel - vanilladot
+```{r}
+svm_model <- ksvm(x=data.matrix(trainData[-c(17)]), 
+                        y=data.matrix(trainData[c(17)]), 
+                        type="C-svc",kernel="vanilladot",C=100,scaled=TRUE)
+```
+
+
+```{r}
+pred <- predict(svm_model,data.matrix(testData[-c(17)]))
+sum(pred == testData[c(17)]) / nrow(testData)
+```
+
+```{r}
+library(pROC)
+roc.val <- roc(default~pred, testData)
+roc.val$auc
+```
+
+```{r}
+library(caret)
+cconf <- confusionMatrix(data = as.factor(pred), 
+                    reference = as.factor(testData$default), positive = "1")
+cconf
+```
+
+```{r}
+kernels <- c("vanilladot", "polydot", "rbfdot", "tanhdot", "laplacedot", "besseldot")
+pred_df <- data.frame(kernel = kernels, accuracy = 0, sensitivity = 0, specificity = 0, auc = 0)
+for(x in 1:length(kernels)){
+  svm_model2 <- ksvm(as.matrix(x=data.matrix(trainData[-c(17)])), 
+                        y=data.matrix(trainData[c(17)]), 
+                        type="C-svc",kernel=kernels[x],C=100,scaled=TRUE)
+  pred2 <- predict(svm_model2,data.matrix(testData[-c(17)]))
+  cconf <- confusionMatrix(data = as.factor(pred2), 
+                    reference = as.factor(testData$default), positive = "1")
+  pred_df[[2]][x] <- cconf$overall["Accuracy"]
+  pred_df[[3]][x] <- cconf$byClass["Sensitivity"]
+  pred_df[[4]][x] <- cconf$byClass["Specificity"]
+  pred_df[[5]][x] <- roc(default~pred2, testData)$auc
+}
+sorted_preds <- pred_df[order(-pred_df$accuracy),]
+print(sorted_preds)
+```
+
+Using parameters from model selection with Lasso
+(excluding other_debtors, residence_history, and job)
+```{r}
+svm_model4 <- ksvm(as.matrix(x=data.matrix(trainData[-c(10, 11, 17, 21)])), 
+                        y=data.matrix(trainData[c(17)]), 
+                        type="C-svc",kernel="vanilladot",C=100,scaled=TRUE)
+```
+```{r}
+pred4 <- predict(svm_model4,data.matrix(testData[-c(10, 11, 17, 21)]))
+cconf <- confusionMatrix(data = as.factor(pred4), 
+                    reference = as.factor(testData$default), positive = "1")
+cconf
+```
+
+
+
+KNN
+```{r}
+library(kknn)
+```
+
+
+```{r}
+plot_knn_preds_k <- function(max_k){
+    pred_df <- data.frame(k = seq(3, max_k, 2), pred = length(seq(3, max_k, 2)))
+    for(x in 1:dim(pred_df)[1]){
+      knn_model <- kknn(default ~ ., data.frame(trainData), data.frame(testData), k = pred_df[[1]][x], scale =  TRUE)
+        pred_df[[2]][x] <- sum(as.matrix(floor(knn_model$fitted.values + 0.5)) == testData[c(17)]) / nrow(testData)
+  }
+  sorted_preds <- pred_df[order(-pred_df$pred),]
+  print(sorted_preds)
+  plot(pred_df$k, pred_df$pred, xlab="k", ylab="Proportion Predicted Correctly", main="Proportion Predicted Correctly by KNN Models with various K values")
+}
+```
+```{r}
+plot_knn_preds_k(25)
+```
+
+```{r}
+knn_model_17 <- kknn(default ~ ., data.frame(trainData), data.frame(testData), k = 17, scale =  TRUE)
+```
+```{r}
+pred_17 <- as.factor(floor(knn_model_17$fitted.values + 0.5))
+cconf <- confusionMatrix(data = pred_17, 
+                    reference = as.factor(testData$default), positive = "1")
+cconf
+```
+
+```{r}
+roc(default~as.numeric(pred_17), testData)$auc
+```
+

@@ -1,0 +1,495 @@
+---
+title: "Regress_Proj"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+cleaning data and test/train split:
+
+```{r}
+credit_data = read.csv("credit.csv",sep=",",header=T)
+credit_data$default[credit_data$default==2] =0
+set.seed(190)
+
+
+```
+```{r}
+credit_data$checking_balance <- as.factor(credit_data$checking_balance)
+credit_data$credit_history <- as.factor(credit_data$credit_history)
+credit_data$purpose <- as.factor(credit_data$purpose)
+credit_data$savings_balance <- as.factor(credit_data$savings_balance)
+credit_data$employment_length <- as.factor(credit_data$employment_length)
+credit_data$installment_rate <-as.factor(credit_data$installment_rate)
+credit_data$dependents <- as.factor(credit_data$dependents)
+credit_data$employment_length<-as.factor(credit_data$employment_length)
+credit_data$personal_status <-as.factor(credit_data$personal_status)
+credit_data$other_debtors <- as.factor(credit_data$other_debtors)
+credit_data$property <- as.factor(credit_data$property)
+credit_data$installment_plan<-as.factor(credit_data$installment_plan)
+credit_data$housing <-as.factor(credit_data$housing)
+credit_data$telephone <- as.factor(credit_data$telephone)
+credit_data$foreign_worker <- as.factor(credit_data$foreign_worker)
+credit_data$job <- as.factor(credit_data$job)
+```
+```{r}
+testRows=sample(nrow(credit_data),0.2*nrow(credit_data))
+testData=credit_data[testRows, ]
+trainData=credit_data[-testRows, ]
+```
+
+Exploratory Data Analysis
+```{r}
+library(DataExplorer)
+plot_str(credit_data)
+plot_str(credit_data, type = "r")
+plot_intro(credit_data)
+plot_qq(credit_data)
+
+plot_missing(credit_data)
+
+plot_histogram(credit_data)
+plot_density(credit_data)
+plot_boxplot(credit_data,by="default")
+
+plot_correlation(credit_data,cor_args= list( 'use' = 'complete.obs'),type = 'c') #continous
+plot_bar(credit_data)
+```
+
+```{r}
+library(ggplot2)
+fit <- glm(default ~ age, family = "binomial", data = trainData)
+
+plot.dat <- data.frame(logodds = predict(fit, trainData), age = trainData$age)
+
+ggplot(plot.dat, aes(x=age, y=logodds)) + geom_point()+geom_smooth(method = "loess")
+
+
+```
+We can see a clear linear relationship between the log odds ratio and the age variable. Also the relationship is positive indicating that with the increase in age, the log odds ratio of being a good credit increases.
+```{r}
+fit <- glm(default ~ amount, family = "binomial", data = trainData)
+
+plot.dat <- data.frame(logodds = predict(fit, trainData), amount = trainData$amount)
+
+ggplot(plot.dat, aes(x=amount, y=logodds)) + geom_point()+geom_smooth(method = "loess")
+
+
+```
+We can see a clear linear relationship between the log odds ratio and the loan amount variable. Also the relationship is negative indicating that with the increase in loan amount, the log odds ratio of being a good credit decreases.
+```{r}
+fit <- glm(default ~ months_loan_duration, family = "binomial", data = trainData)
+probabilities <- predict(fit, type = "response")
+logit <- log(probabilities/(1-probabilities))
+plot.dat <- data.frame(logodds = logit, months_loan_duration = trainData$months_loan_duration)
+ggplot(plot.dat, aes(x=months_loan_duration, y=logodds)) + geom_point()
+
+
+```
+We can see a clear linear relationship between the log odds ratio and the months_loan_duration variable. Also the relationship is negative indicating that with the increase in months loan duration, the log odds ratio of being a good credit decreases.
+We can also plot boxplot to investigate this.
+```{r}
+boxplot(amount~default,data=trainData,ylab="Amount",xlab="Default")
+```
+The mean amount of default is higher than the mean amount for no default.
+```{r}
+boxplot(age~default,data=trainData,ylab="Age",xlab="Default")
+```
+The mean age for default is lower than the mean age of not default.
+```{r}
+boxplot(months_loan_duration ~default,data=trainData,ylab="Months loan duration",xlab="Default")
+```
+The mean months loan duration for default is lower than the mean age of not default.
+
+Fitting the full model
+
+Fitting the model:
+```{r}
+model <- glm(default~.,data=trainData,family="binomial")
+summary(model)
+```
+Full Model Predictions
+```{r}
+probabilities <- predict(model, testData[,-c(17)],type="response")
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+mean(predicted.classes==testData$default)
+```
+```{r}
+accuracy = c()
+for(i in seq(0.1,1,0.05)){
+    probabilities <- predict(model, testData[,-c(17)],type="response")
+  predicted.classes <- ifelse(probabilities > i, 1, 0)
+  accuracy = c(accuracy,mean(predicted.classes!=testData$default))
+}
+plot(seq(0.1,1,0.05),accuracy,xlab = "threshold", ylab ="classification error rate") 
+```
+```{r}
+predicted.classes <- ifelse(probabilities > 0.55, 1, 0)
+```
+```{r}
+library(caret)
+library(e1071)
+#create confusion matrix using caret package, positive = 1
+cconf <- confusionMatrix(data = as.factor(predicted.classes), 
+                    reference = as.factor(testData$default), positive = "1")
+cconf$table
+```
+From the confusion matrix, we can see that although the model does decently on classfying the not default individuals but performs poorly in the prediction of default individuals. This may prove to be very costly for the loaning bank.
+
+```{r}
+cconf$byClass["Sensitivity"]
+```
+```{r}
+cconf$byClass["Specificity"]
+```
+```{r}
+cconf$overall["Accuracy"]
+
+```
+```{r}
+library(pROC)
+testData$predicted <- predicted.classes
+roc.val <- roc(default~predicted, testData)
+plot(roc.val, main="ROC plot") 
+```
+```{r}
+roc.val$auc
+```
+Goodness of fit and model assumptions
+```{r}
+c(AIC(model,k=2), AIC(model,k=nrow(trainData)))
+```
+```{r}
+1-pchisq(deviance(model),model$df.residual)
+pearres <- residuals(model,type="pearson")
+pearson.tvalue = sum(pearres^2)
+c(pearson.tvalue, 1-pchisq(pearson.tvalue,model$df.residual))
+```
+We do not reject the hypothesis of good fit.
+```{r}
+length(coef(model))-1
+```
+
+There are 50 variables in full model
+```{r}
+1-pchisq((model$null.dev-model$deviance), (model$df.null-model$df.resid))
+```
+There is at least one variable in the model that is significant in explaining the variability of response.
+
+```{r}
+res = resid(model,type="deviance")
+par(mfrow=c(1,2))
+qqnorm(res, ylab="Std residuals")
+qqline(res,col="blue",lwd=2)
+hist(res,xlab="Std residuals", main="")
+```
+```{r}
+par(mfrow=c(3,1))
+plot(trainData$months_loan_duration,res,ylab="Std residuals",xlab="Months Loan Duration")
+abline(0,0,col="blue",lwd=2)
+plot(trainData$age,res,ylab="Std residuals",xlab="Age")
+abline(0,0,col="blue",lwd=2)
+plot(trainData$amount,res,ylab="Std residuals",xlab="Amount")
+abline(0,0,col="blue",lwd=2)
+```
+There seems to be some clustering in the residuals, indicating violation of the independence assumption.
+The histogram of the residuals show a bimodal distribution.This indicates there might be a important.
+```{r}
+mod1=glm(default~.,data=credit_data,family=binomial)
+library(dplyr)
+library(tidyr)
+#library(tidyverse)
+library(broom)
+
+probabilities<-predict(mod1,type ="response" )
+# Select only numeric predictors
+mydata <- credit_data %>%
+  dplyr::select_if(is.numeric) 
+predictors <- colnames(mydata)
+# Bind the logit and tidying the data for plot
+mydata <- mydata %>%
+  mutate(logit = log(probabilities/(1-probabilities))) %>%
+  gather(key = "predictors", value = "predictor.value", -logit)
+
+
+library(ggplot2)
+ggplot(mydata, aes(logit,predictor.value))+
+  geom_point(size = 0.5, alpha = 0.5) +geom_smooth(method = "loess")+
+  facet_wrap(~predictors, scales = "free_y")
+  
+  
+```
+
+Is there overdispersion in model?
+```{r}
+deviance(model)/model$df.residual
+```
+
+
+No overdispersion in the model.
+Identify unusual observations (outliers, leverage points)
+Outlier detection
+```{r}
+cook <- cooks.distance(model)
+plot(cook,type="h",lwd=3,col="red", ylab = "Cook's Distance")
+```
+```{r}
+n=nrow(trainData)
+outliers = which(cook>(4/n))
+```
+Remove outliers from the train data and fit the model
+```{r}
+trainData_omitout <- trainData[-outliers,]
+model2 <- glm(default~checking_balance+months_loan_duration+credit_history+purpose+amount+savings_balance+employment_length+installment_rate+personal_status+other_debtors+residence_history+property+installment_plan+housing+existing_credits+dependents+telephone+foreign_worker+job+age,data=trainData_omitout,family="binomial")
+summary(model2)
+```
+```{r}
+res = resid(model2,type="deviance")
+par(mfrow=c(1,2))
+qqnorm(res, ylab="Std residuals")
+qqline(res,col="blue",lwd=2)
+hist(res,xlab="Std residuals", main="")
+```
+Bimodality still exists after removing outliers.
+```{r}
+accuracy = c()
+for(i in seq(0.1,1,0.05)){
+    probabilities <- predict(model2, testData[,-c(17)],type="response")
+  predicted.classes <- ifelse(probabilities > i, 1, 0)
+  accuracy = c(accuracy,mean(predicted.classes!=testData$default))
+}
+plot(seq(0.1,1,0.05),accuracy,xlab = "threshold", ylab ="classification error rate") 
+```
+```{r}
+predicted.classes <- ifelse(probabilities > 0.55, 1, 0)
+```
+```{r}
+cconf <- confusionMatrix(data = as.factor(predicted.classes), 
+                    reference = as.factor(testData$default), positive = "1")
+cconf$table
+```
+```{r}
+cconf$overall["Accuracy"]
+```
+```{r}
+cconf$byClass["Specificity"]
+```
+```{r}
+cconf$byClass["Sensitivity"]
+```
+
+
+```{r}
+pearres <- residuals(model2,type="pearson")
+pearson.tvalue = sum(pearres^2)
+c(1-pchisq(deviance(model2),model2$df.residual),pearson.tvalue, 1-pchisq(pearson.tvalue,model2$df.residual))
+```
+
+
+Model3
+Let us try the probit link function.
+```{r}
+model3 <- glm(default~.,data=trainData,family=binomial(link=probit))
+summary(model3)
+```
+```{r}
+res = resid(model3,type="deviance")
+par(mfrow=c(1,2))
+qqnorm(res, ylab="Std residuals")
+qqline(res,col="blue",lwd=2)
+hist(res,xlab="Std residuals", main="")
+```
+Bimodailty issues still persist.
+```{r}
+accuracy = c()
+for(i in seq(0.1,1,0.05)){
+    probabilities <- predict(model3, testData[,-c(17)],type="response")
+  predicted.classes <- ifelse(probabilities > i, 1, 0)
+  accuracy = c(accuracy,mean(predicted.classes!=testData$default))
+}
+plot(seq(0.1,1,0.05),accuracy,xlab = "threshold", ylab ="classification error rate") 
+```
+```{r}
+predicted.classes <- ifelse(probabilities > 0.55, 1, 0)
+library(caret)
+cconf <- confusionMatrix(data = as.factor(predicted.classes), 
+                    reference = as.factor(testData$default), positive = "1")
+cconf$table
+```
+```{r}
+cconf$overall["Accuracy"]
+```
+
+
+```{r}
+minmod=glm(default~1,data=trainData,family="binomial")
+model4=step(minmod, scope = list(lower=minmod,upper=model), direction = "forward",trace=F)
+summary(model4)
+```
+```{r}
+length(coef(model4))-1
+```
+```{r}
+res = resid(model4,type="deviance")
+par(mfrow=c(1,2))
+qqnorm(res, ylab="Std residuals")
+qqline(res,col="blue",lwd=2)
+hist(res,xlab="Std residuals", main="")
+```
+```{r}
+accuracy = c()
+for(i in seq(0.1,1,0.05)){
+    probabilities <- predict(model4, testData[,-c(17)],type="response")
+  predicted.classes <- ifelse(probabilities > i, 1, 0)
+  accuracy = c(accuracy,mean(predicted.classes!=testData$default))
+}
+plot(seq(0.1,1,0.05),accuracy,xlab = "threshold", ylab ="classification error rate") 
+```
+```{r}
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+library(caret)
+cconf <- confusionMatrix(data = as.factor(predicted.classes), 
+                    reference = as.factor(testData$default), positive = "1")
+cconf$table
+```
+```{r}
+cconf$overall["Accuracy"]
+```
+
+```{r}
+cconf$byClass["Specificity"]
+```
+```{r}
+cconf$byClass["Sensitivity"]
+```
+
+
+```{r}
+minmod=glm(default~1,data=credit_data,family="binomial")
+#model <- glm(Noshows~.,data=Data,family="binomial")
+model5=step(model, scope = list(lower=minmod,upper=model), direction = "backward",trace=F)
+summary(model5)
+```
+```{r}
+length(coef(model5))-1
+```
+```{r}
+res = resid(model5,type="deviance")
+par(mfrow=c(1,2))
+qqnorm(res, ylab="Std residuals")
+qqline(res,col="blue",lwd=2)
+hist(res,xlab="Std residuals", main="")
+```
+```{r}
+accuracy = c()
+for(i in seq(0.1,1,0.05)){
+    probabilities <- predict(model5, testData[,-c(17)],type="response")
+  predicted.classes <- ifelse(probabilities > i, 1, 0)
+  accuracy = c(accuracy,mean(predicted.classes!=testData$default))
+}
+plot(seq(0.1,1,0.05),accuracy,xlab = "threshold", ylab ="classification error rate") 
+```
+```{r}
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+library(caret)
+cconf <- confusionMatrix(data = as.factor(predicted.classes), 
+                    reference = as.factor(testData$default), positive = "1")
+cconf$table
+```
+
+```{r}
+predictors = model.matrix(default ~ ., data = trainData,family ="binomial")
+predictors = predictors[,-1] #remove intercept
+response = data.matrix(trainData[, 17])
+library(glmnet)
+
+#Like lm.ridge, this function automatically scales the predicotrs.
+set.seed(190)
+model6.cv=cv.glmnet(predictors,trainData$default,family=c("binomial"),alpha=1,nfolds=10)
+model6 = glmnet(predictors,trainData$default, family=c("binomial"),alpha = 1, nlambda = 100)
+model6.cv$lambda.min
+coef(model6,s=model6.cv$lambda.min)
+```
+```{r}
+plot(model6.cv)
+```
+The plot displays the cross-validation error according to the log of lambda. The left dashed vertical line indicates that the log of the optimal value of lambda is approximately -5, which is the one that minimizes the prediction error. This lambda value will give the most accurate model. The exact value of lambda can be viewed as follow:
+```{r}
+min_lambda = model6.cv$lambda.min
+min_lambda
+```
+
+```{r}
+
+lasso_model = glmnet(predictors, trainData$default, alpha = 1, lambda = min_lambda,family="binomial")
+x.test <- model.matrix(default ~., testData)[,-1]
+probabilities <- lasso_model %>% predict(newx = x.test,type="response")
+```
+
+```{r}
+accuracy = c()
+for(i in seq(0.1,1,0.05)){
+  predicted.classes <- ifelse(probabilities > i, 1, 0)
+  accuracy = c(accuracy,mean(predicted.classes!=testData$default))
+}
+plot(seq(0.1,1,0.05),accuracy,xlab = "threshold", ylab ="classification error rate") 
+```
+```{r}
+predicted.classes <- ifelse(probabilities > 0.6, 1, 0)
+library(caret)
+cconf <- confusionMatrix(data = as.factor(predicted.classes), 
+                    reference = as.factor(testData$default), positive = "1")
+cconf$table
+```
+```{r}
+cconf$overall["Accuracy"]
+```
+```{r}
+cconf$byClass["Specificity"]
+```
+```{r}
+cconf$byClass["Sensitivity"]
+```
+Although the overall accuracy remains the same, but the sensivity is increased a lot, indicating we are now classifying the people who are likely to default better.
+```{r}
+set.seed(190)
+model7.cv=cv.glmnet(predictors,trainData$default,family=c("binomial"),alpha=0.5,nfolds=10)
+model7 = glmnet(predictors,trainData$default, family=c("binomial"),alpha = 0.5, nlambda = 100)
+model7.cv$lambda.min
+coef(model7,s=model7.cv$lambda.min)
+```
+
+```{r}
+plot(model7.cv)
+```
+```{r}
+min_lambda = model7.cv$lambda.min
+min_lambda
+```
+
+```{r}
+elastic_model = glmnet(predictors, trainData$default, alpha = 0.5, lambda = min_lambda,family="binomial")
+x.test <- model.matrix(default ~., testData)[,-1]
+probabilities <- elastic_model %>% predict(newx = x.test,type="response")
+```
+```{r}
+accuracy = c()
+for(i in seq(0.1,1,0.05)){
+  predicted.classes <- ifelse(probabilities > i, 1, 0)
+  accuracy = c(accuracy,mean(predicted.classes!=testData$default))
+}
+plot(seq(0.1,1,0.05),accuracy,xlab = "threshold", ylab ="classification error rate") 
+```
+```{r}
+predicted.classes <- ifelse(probabilities > 0.6, 1, 0)
+library(caret)
+cconf <- confusionMatrix(data = as.factor(predicted.classes), 
+                    reference = as.factor(testData$default), positive = "1")
+cconf$table
+```
+```{r}
+cconf$overall["Accuracy"]
+```
+

@@ -1,0 +1,356 @@
+---
+title: "Regress_Proj"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+cleaning data and test/train split:
+
+```{r}
+credit_data_unclean = read.csv("credit.csv",sep=",",header=T)
+credit_data= na.omit(credit_data_unclean)
+set.seed(190)
+credit_data[credit_data$default==2,]$default=0
+testRows=sample(nrow(credit_data),0.2*nrow(credit_data))
+
+#credit_data$default=as.factor(credit_data$default)
+
+testData=credit_data[testRows, ]
+trainData=credit_data[-testRows, ]
+
+
+
+```
+
+Some EDA:
+
+```{r}
+library(DataExplorer)
+plot_str(credit_data)
+plot_str(credit_data, type = "r")
+plot_intro(credit_data)
+plot_qq(credit_data)
+
+plot_missing(credit_data)
+
+plot_histogram(credit_data)
+plot_density(credit_data)
+plot_boxplot(credit_data,by="default")
+
+plot_correlation(credit_data,cor_args= list( 'use' = 'complete.obs'),type = 'c') #continous
+plot_bar(credit_data)
+
+
+```
+
+
+
+
+
+
+
+Fitting the model:
+
+```{r}
+
+
+
+mod1=glm(default~.,data=credit_data,family=binomial)
+summary(mod1)
+n=length(credit_data)
+
+```
+
+
+
+
+```{r}
+library(CombMSC)
+s2=sigma(mod1)^2
+c(Cp(mod1,S2=s2), AIC(mod1,k=2),AIC(mod1,k=log(n)))
+```
+
+Goodness of Fit:
+```{r}
+#With deviance residuals 
+1-pchisq(mod1$deviance,mod1$df.residual)
+#with Pearson residuals pResid <- resid(model2, type = "pearson") 
+pResid<-resid(mod1,type="pearson")
+1-pchisq(sum(pResid^2),mod1$df.residual)
+
+mod1$df.residual
+sum(pResid^2)
+```
+
+RESIDUAL ANALYSIS
+```{r}
+res <- residuals(mod1,type="deviance") 
+ 
+hist(res,breaks=8,density=15,xlab="Standard residuals", main="Frequency of Residuals Model1") 
+```
+BIMODAL suggests that some predictor variable is missed.
+
+
+```{r}
+res <- residuals(mod1,type="deviance") 
+qqnorm(res) 
+qqline(res) 
+
+```
+
+
+
+```{r}
+
+for (i in 1:length(credit_data)) 
+{  
+plot(credit_data[,i], res, ylab = "Deviance",xlab = names(credit_data[i]))   
+abline(0,0,lwd=2) 
+  } 
+
+```
+The median is not distributed equally either sides of zero, suggesting there is some bias.
+
+Linearity:
+
+
+```{r}
+mod1=glm(default~.,data=credit_data,family=binomial)
+library(dplyr)
+library(tidyr)
+#library(tidyverse)
+library(broom)
+
+probabilities<-predict(mod1,type ="response" )
+# Select only numeric predictors
+mydata <- credit_data %>%
+  dplyr::select_if(is.numeric) 
+predictors <- colnames(mydata)
+# Bind the logit and tidying the data for plot
+mydata <- mydata %>%
+  mutate(logit = log(probabilities/(1-probabilities))) %>%
+  gather(key = "predictors", value = "predictor.value", -logit)
+
+
+library(ggplot2)
+ggplot(mydata, aes(logit, predictor.value))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "loess") + 
+  theme_bw() + 
+  facet_wrap(~predictors, scales = "free_y")
+
+
+```
+
+
+
+Forward Stepwise Regression:
+```{r}
+
+minmod=glm(default~1,data=credit_data,family=binomial)
+mod3=step(minmod, scope = list(lower=minmod,upper=mod1), direction = "forward",trace=F)
+summary(mod3)
+
+```
+
+
+```{r}
+length(mod1$coefficients)
+length(mod3$coefficients)
+
+```
+
+DECISION TREE MODEL:
+```{r}
+#install.packages("tree")
+library(tree)
+
+
+```
+
+```{r}
+set.seed(1)
+length(credit_data)
+mod_tree<-tree(default~.,data=trainData)
+summary(mod_tree)
+
+```
+
+```{r}
+#Plotting the tree
+plot(mod_tree)
+text(mod_tree)
+
+mod_tree_cv <- cv.tree(mod_tree)
+
+
+
+
+```
+
+
+```{r}
+
+#looking at deviance of trees with diffrent number of terminal nodes
+plot(mod_tree_cv$size, mod_tree_cv$dev, type = "b")
+
+```
+```{r}
+termnodes <- 3
+pruned_tree <- prune.tree(mod_tree, best = termnodes)
+
+
+# Plot the pruned tree
+
+plot(pruned_tree)
+text(pruned_tree)
+
+```
+
+```{r}
+yhat <- predict(pruned_tree,newdata = testData)
+
+```
+
+
+
+
+```{r}
+
+
+for (j in seq(0,1,by=0.1)){
+
+yhat <- predict(pruned_tree,newdata = testData)  
+yhat[yhat<j]=0
+yhat[yhat>=j]=1
+
+#accuracy
+
+count=0
+for (i in 1:length(yhat)) {
+if(yhat[i] == testData$default[i]) count = count+1
+}
+
+accuracy=count/length(yhat)
+
+print(paste(accuracy,j))
+
+  
+  
+  
+}
+
+```
+
+```{r}
+
+
+yhat <- predict(pruned_tree,newdata = testData)  
+yhat[yhat<0.5]=0
+yhat[yhat>=0.5]=1
+
+table(as.factor(yhat))
+table(as.factor(testData$default))
+
+library(caret)
+cconf <- confusionMatrix(data = as.factor(yhat), reference = as.factor(testData$default),positive = "1")
+cconf$table
+
+cconf$overall["Accuracy"]
+cconf$byClass["Specificity"]
+cconf$byClass["Sensitivity"]
+
+
+```
+
+
+```{r}
+
+#install.packages("randomForest")
+library(randomForest)
+
+set.seed(1)
+```
+
+
+```{r}
+
+require(caTools)
+
+rf <- randomForest(default~., data = trainData)
+pred_data <- predict(rf, newdata = testData, type = "class")
+
+mean(pred_data == testData$default)  
+
+
+#table(pred_data,credit_data$default)
+
+```
+
+
+```{r}
+importance(rf)        
+varImpPlot(rf) 
+
+```
+
+```{r}
+
+for (j in seq(0,1,by=0.1)){
+
+yhat <- predict(rf, testData, type = "class")  
+yhat[yhat<j]=0
+yhat[yhat>=j]=1
+
+#accuracy
+
+count=0
+for (i in 1:length(yhat)) {
+if(yhat[i] == testData$default[i]) count = count+1
+}
+
+accuracy=count/length(yhat)
+
+print(paste(accuracy,j))
+  
+  
+}
+
+
+
+
+```
+
+
+
+```{r}
+
+table(credit_data$default)
+
+
+```
+```{r}
+yhat <- predict(rf,newdata = testData)  
+yhat[yhat<0.9]=0
+yhat[yhat>=0.9]=1
+
+table(as.factor(yhat))
+table(as.factor(testData$default))
+
+library(caret)
+cconf <- confusionMatrix(data = as.factor(yhat), reference = as.factor(testData$default),positive = "1")
+cconf$table
+
+cconf$overall["Accuracy"]
+cconf$byClass["Specificity"]
+cconf$byClass["Sensitivity"]
+
+
+
+```
+
+
+
